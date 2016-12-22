@@ -15,4 +15,4 @@ route add default gw 192.168.30.2
 ip=115.159.212.140
 export ip
 alias mountsda='mount -t auto /dev/sda1 /mnt'
-
+service sshd start
