@@ -1,0 +1,17 @@
+# sysstat-9.0.4 configuration file.
+
+# How long to keep log files (in days).
+# If value is greater than 28, then log files are kept in
+# multiple directories, one for each month.
+HISTORY=28
+
+# Compress (using gzip or bzip2) sa and sar files older than (in days):
+COMPRESSAFTER=31
+
+# Parameters for the system activity data collector (see sadc manual page)
+# which are used for the generation of log files.
+SADC_OPTIONS="-S DISK"
+
+# Compression program to use.
+ZIP="bzip2"
+

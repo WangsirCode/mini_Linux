@@ -1,0 +1,5 @@
+##############################################################################################################
+# Watts Up? Pro Devices
+#
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="A80?????", ENV{DKP_VENDOR}="Watts Up, Inc.", ENV{DKP_PRODUCT}="Watts Up? Pro", ENV{DKP_MONITOR_TYPE}="wup"
+

@@ -1,0 +1,8 @@
+# Space separate list of directories that should be made private
+# (not necessarily just home directories).
+HOMEDIRS="/home"
+# Control group configuration
+NAME=sandbox
+CPUAFFINITY=ALL
+MEMUSAGE=80%
+CPUUSAGE=80%

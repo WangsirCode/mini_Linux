@@ -1,0 +1,6 @@
+KERNEL=="ucm*", MODE="0666" 
+KERNEL=="uverbs*", MODE="0666" 
+KERNEL=="uat", MODE="0666" 
+KERNEL=="rdma_cm", MODE="0666"
+KERNEL=="issm*", MODE="0660"
+KERNEL=="umad*", MODE="0660"

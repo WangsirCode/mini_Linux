@@ -1,0 +1,504 @@
+#!/bin/bash
+#
+# Bring up/down the kernel RDMA stack
+#
+# chkconfig: - 05 95
+# description: Loads/Unloads InfiniBand and iWARP kernel modules
+# config:	/etc/rdma/rdma.conf
+#
+### BEGIN INIT INFO
+# Provides:       rdma
+# Default-Stop: 0 1 2 3 4 5 6
+# Required-Start:
+# Required-Stop:
+# Short-Description: Loads and unloads the InfiniBand and iWARP kernel modules
+# Description: Loads and unloads the InfiniBand and iWARP kernel modules
+### END INIT INFO
+
+CONFIG=/etc/rdma/rdma.conf
+
+. /etc/rc.d/init.d/functions
+
+LOAD_ULP_MODULES=""
+LOAD_CORE_USER_MODULES="ib_umad ib_uverbs ib_ucm rdma_ucm"
+LOAD_CORE_CM_MODULES="iw_cm ib_cm rdma_cm"
+LOAD_CORE_MODULES="ib_addr ib_core ib_mad ib_sa"
+
+if [ -f $CONFIG ]; then
+    . $CONFIG
+
+    if [ "${RDS_LOAD}" == "yes" ]; then
+        IPOIB_LOAD=yes
+    fi
+
+    if [ "${IPOIB_LOAD}" == "yes" ]; then
+	LOAD_ULP_MODULES="ib_ipoib"
+    fi
+
+    if [ "${RDS_LOAD}" == "yes" ]; then
+	LOAD_ULP_MODULES="$LOAD_ULP_MODULES rds"
+    fi
+
+    if [ "${SRP_LOAD}" == "yes" ]; then
+	LOAD_ULP_MODULES="$LOAD_ULP_MODULES ib_srp"
+    fi
+
+    if [ "${ISER_LOAD}" == "yes" ]; then
+	LOAD_ULP_MODULES="$LOAD_ULP_MODULES ib_iser"
+    fi
+else
+    LOAD_ULP_MODULES="ib_ipoib"
+fi
+
+UNLOAD_ULP_MODULES="ib_iser ib_srp rds_rdma ib_ipoib"
+UNLOAD_HW_MODULES="iw_c2 iw_cxgb4 iw_cxgb3 iw_nes ib_ehca ib_ipath ib_mthca mlx4_ib ib_qib mlx5_ib mlx5_core ocrdma"
+UNLOAD_CORE_USER_MODULES="rdma_ucm ib_ucm ib_uverbs ib_umad"
+UNLOAD_CORE_CM_MODULES="rdma_cm ib_cm iw_cm"
+UNLOAD_CORE_MODULES="ib_sa ib_mad ib_core ib_addr"
+
+# We support renaming ib? interfaces to named interfaces, so do scan for link
+# type infiniband and pull out whatever names are present
+interfaces=`LANG=C ip -o link | awk -F ': ' -vIGNORECASE=1 '/link\/infiniband/ { print $2 }'`
+
+get_configs_by_type ()
+{
+	LANG=C grep -E -i -l "^[[:space:]]*TYPE=${1}" \
+			/etc/sysconfig/network-scripts/ifcfg-* \
+			| LC_ALL=C sed -e "$__sed_discard_ignored_files" \
+			| cut -f 3 -d '-'
+}
+
+# If module $1 is loaded return - 0 else - 1
+is_module()
+{
+    /sbin/lsmod | grep -w "$1" > /dev/null 2>&1
+    return $?    
+}
+
+load_modules()
+{
+    local RC=0
+
+    for module in $*; do
+	if ! is_module $module; then
+	    /sbin/modprobe $module
+	    res=$?
+	    RC=$[ $RC + $res ]
+	    if [ $res -ne 0 ]; then
+		echo
+		echo -n "Failed to load module $mod"
+	    fi
+	fi
+    done
+    return $RC
+}
+
+unload_module()
+{
+    local mod=$1
+    # Unload module $1
+    if is_module $mod; then
+	/sbin/rmmod $mod > /dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    echo
+	    echo "Failed to unload $mod"
+	    return 1
+	fi
+    fi
+    return 0
+}
+
+# This function is a horrible hack to work around BIOS authors that should
+# be shot.  Specifically, certain BIOSes will map the entire 4GB address
+# space as write-back cacheable when the machine has 4GB or more of RAM, and
+# then they will exclude the reserved PCI I/O addresses from that 4GB
+# cacheable mapping by making on overlapping uncacheable mapping.  However,
+# once you do that, it is then impossible to set *any* of the PCI I/O
+# address space as write-combining.  This is an absolute death-knell to
+# certain IB hardware.  So, we unroll this mapping here.  Instead of
+# punching a hole in a single 4GB mapping, we redo the base 4GB mapping as
+# a series of discreet mappings that effectively are the same as the 4GB
+# mapping minus the hole, and then we delete the uncacheable mappings that
+# are used to punch the hole.  This then leaves the PCI I/O address space
+# unregistered (which defaults it to uncacheable), but available for
+# write-combining mappings where needed.
+check_mtrr_registers()
+{
+    # If we actually change the mtrr registers, then the awk script will
+    # return true, and we need to unload the ib_ipath module if it's already
+    # loaded.  The udevtrigger in load_hardware_modules will immediately
+    # reload the ib_ipath module for us, so there shouldn't be a problem.
+    [ -f /proc/mtrr -a -f /etc/rdma/fixup-mtrr.awk ] && 
+	awk -f /etc/rdma/fixup-mtrr.awk /proc/mtrr 2>/dev/null &&
+	if is_module ib_ipath; then
+		/sbin/rmmod ib_ipath
+	fi
+}
+
+load_hardware_modules()
+{
+    local -i RC=0
+
+    [ "$FIXUP_MTRR_REGS" = "yes" ] && check_mtrr_registers
+    # WARNING!!  If you are using this script to take down and bring up
+    # your IB interfaces on a machine that uses more than one low level
+    # Infiniband hardware driver, then there is no guarantee that the
+    # ordering of rdma interfaces after you take down and bring up the
+    # stack will be the same as the ordering of the interfaces on a
+    # clean boot.
+    #
+    # We match both class NETWORK and class INFINIBAND devices since our
+    # iWARP hardware is listed under class NETWORK.  The side effect of
+    # this is that we might cause a non-iWARP network driver to be loaded.
+    udevadm trigger --subsystem-match=pci --attr-nomatch=driver --attr-match=class=0x020000
+    udevadm trigger --subsystem-match=pci --attr-nomatch=driver --attr-match=class=0x0c0600
+    udevadm settle
+    if [ -r /proc/device-tree ]; then
+	if [ -n "`ls /proc/device-tree | grep lhca`" ]; then
+	    if ! is_module ib_ehca; then
+		load_modules ib_ehca
+		RC+=$?
+	    fi
+	fi
+    fi
+    if is_module cxgb3 -a ! is_module iw_cxgb3; then
+	load_modules iw_cxgb3
+	RC+=$?
+    fi
+    if is_module cxgb4 -a ! is_module iw_cxgb4; then
+	load_modules iw_cxgb4
+	RC+=$?
+    fi
+    if is_module mlx4_core -a ! is_module mlx4_ib; then
+	load_modules mlx4_ib
+	RC+=$?
+    fi
+    if is_module mlx5_core -a ! is_module mlx5_ib; then
+	load_modules mlx5_ib
+	RC+=$?
+    fi
+    if is_module be2net -a ! is_module ocrdma; then
+    	load_modules ocrdma
+	RC+=$?
+    fi
+    if is_module enic -a ! is_module usnic_verbs; then
+    	load_modules usnic_verbs
+	RC+=$?
+    fi
+    return $RC
+}
+
+errata_58()
+{
+    # Check AMD chipset issue Errata #58
+    if test -x /sbin/lspci && test -x /sbin/setpci; then
+	if ( /sbin/lspci -nd 1022:1100 | grep "1100" > /dev/null ) &&
+	   ( /sbin/lspci -nd 1022:7450 | grep "7450" > /dev/null ) &&
+	   ( /sbin/lspci -nd 15b3:5a46 | grep "5a46" > /dev/null ); then
+	    CURVAL=`/sbin/setpci -d 1022:1100 69`
+	    for val in $CURVAL
+	    do
+		if [ "${val}" != "c0" ]; then
+		    /sbin/setpci -d 1022:1100 69=c0
+		    if [ $? -eq 0 ]; then
+			break
+		    else
+			echo "Failed to apply AMD-8131 Errata #58 workaround"
+		    fi
+		fi
+	    done
+	fi
+    fi
+}
+
+errata_56()
+{
+    # Check AMD chipset issue Errata #56
+    if test -x /sbin/lspci && test -x /sbin/setpci; then
+	if ( /sbin/lspci -nd 1022:1100 | grep "1100" > /dev/null ) &&
+	   ( /sbin/lspci -nd 1022:7450 | grep "7450" > /dev/null ) &&
+	   ( /sbin/lspci -nd 15b3:5a46 | grep "5a46" > /dev/null ); then
+	    bus=""
+	    # Look for devices AMD-8131
+	    for dev in `/sbin/setpci -v -f -d 1022:7450 19 | cut -d':' -f1,2`
+	    do
+		bus=`/sbin/setpci -s $dev 19`
+		rev=`/sbin/setpci -s $dev 8`
+		# Look for Tavor attach to secondary bus of this devices
+		for device in `/sbin/setpci -f -s $bus: -d 15b3:5a46 19`
+		do
+		    if [ $rev -lt 13 ]; then
+			/sbin/setpci -d 15b3:5a44 72=14
+			if [ $? -eq 0 ]; then
+			    break
+			else
+			    echo
+			    echo "Failed to apply AMD-8131 Errata #56 workaround"
+			fi
+		    else
+			continue
+		    fi
+		    # If more than one device is on the bus the issue a
+		    # warning
+		    num=`/sbin/setpci -f -s $bus: 0 | wc -l |  sed 's/\ *//g'`
+		    if [ $num -gt 1 ]; then
+			echo "Warning: your current PCI-X configuration might be incorrect."
+			echo "see AMD-8131 Errata 56 for more details."
+		    fi
+		done
+	    done
+	fi
+    fi
+}
+
+start()
+{
+    local RC=0
+    local loaded=0
+
+    echo -n "Loading OpenIB kernel modules:"
+
+    load_hardware_modules
+    RC+=$?
+    load_modules $LOAD_CORE_MODULES
+    RC+=$?
+    load_modules $LOAD_CORE_CM_MODULES
+    RC+=$?
+    load_modules $LOAD_CORE_USER_MODULES
+    RC+=$?
+    load_modules $LOAD_ULP_MODULES
+    RC+=$?
+    if is_module rds && ! is_module rds_rdma && test "${RDS_LOAD}" = "yes"; then
+	load_modules rds_rdma
+	RC+=$?
+    fi
+   
+    # Add node description to sysfs
+    IBSYSDIR="/sys/class/infiniband"
+    if [ -d ${IBSYSDIR} ]; then
+        pushd ${IBSYSDIR} >/dev/null 2>&1
+	for hca in *
+	do
+	    if [ -w ${hca}/node_desc ]; then
+	    	echo -n "$(hostname -s) ${hca}" >> ${hca}/node_desc 2> /dev/null
+	    fi
+	done
+	popd >/dev/null 2>&1
+    fi
+   
+    errata_58
+    errata_56
+
+    touch /var/lock/subsys/rdma
+    [ $RC -eq 0 ] && echo_success || echo_failure
+    echo
+    return $RC    
+}
+
+stop()
+{
+    # Check if applications which use infiniband are running
+    local apps="ibacm opensm osmtest srp_daemon"
+    local pid
+    local RC=0
+    
+    echo -n "Unloading OpenIB kernel modules:"
+
+    for app in $apps
+    do
+    	if ( ps -ef | grep $app | grep -v grep > /dev/null 2>&1 ); then
+	    echo
+	    echo "Found $app running."
+	    echo "Please stop all RDMA applications before downing the stack."
+	    echo_failure
+	    echo
+	    return 1
+	fi
+    done
+
+    if is_module svcrdma; then
+    	echo "NFSoRDMA support is still enabled."
+	echo "Please stop the nfs-rdma service before stopping the rdma service."
+	echo_failure
+	echo
+	return 1
+    fi
+
+    if ! is_module ib_core; then
+	# Nothing to do, make sure lock file is gone and return
+	rm -f /var/lock/subsys/rdma
+	echo_success
+	echo
+	return 0
+    fi
+
+    # Down all IPoIB interfaces
+    if is_module ib_ipoib; then
+	for i in $interfaces
+	do
+	    config=/etc/sysconfig/network-scripts/ifcfg-$i
+	    if [ -e $config ]; then
+		unset ${SLAVE}
+		unset ${MASTER}
+		. $config
+	        [ "${SLAVE}" = yes -a "${MASTER}" ] && ifdown ${MASTER} >/dev/null 2>&1
+	        ifdown $i >/dev/null 2>&1
+	    else
+		ip link set $i down
+	    fi
+	done    
+    fi
+    # Small sleep to let the ifdown settle before we remove any modules
+    sleep 1
+	
+    # Unload OpenIB modules
+    MODULES="$UNLOAD_ULP_MODULES $UNLOAD_CORE_USER_MODULES"
+    MODULES="$MODULES $UNLOAD_CORE_CM_MODULES"
+    for mod in $MODULES
+    do
+	unload_module $mod
+	RC=$[ $RC + $? ]
+    done
+    # Insert a sleep here for all the ULP modules to have been fully removed
+    # before proceeding to unload the driver modules
+    sleep 1
+    MODULES="$UNLOAD_HW_MODULES $UNLOAD_CORE_MODULES" 
+    for mod in $MODULES
+    do
+	unload_module $mod
+	RC=$[ $RC + $? ]
+    done
+
+    rm -f /var/lock/subsys/rdma
+    [ $RC -eq 0 ] && echo_success || echo_failure
+    echo
+    return $RC
+}
+
+status()
+{
+    local -i cnt=0
+    local -i modules=0
+    local module=""
+
+    echo -ne "Low level hardware support loaded:\n\t"
+    for module in $UNLOAD_HW_MODULES; do
+	if is_module $module; then
+	    echo -n "$module "
+	    let cnt++
+	fi
+    done
+    [ $cnt -eq 0 ] && echo -n "none found"
+    modules+=cnt
+    echo
+    echo
+
+    echo -ne "Upper layer protocol modules:\n\t"
+    cnt=0
+    for module in $UNLOAD_ULP_MODULES; do
+	if is_module $module; then
+	    echo -n "$module "
+	    let cnt++
+	fi
+    done
+    [ $cnt -eq 0 ] && echo -n "none found"
+    modules+=cnt
+    echo
+    echo
+
+    echo -ne "User space access modules:\n\t"
+    cnt=0
+    for module in $UNLOAD_CORE_USER_MODULES; do
+	if is_module $module; then
+	    echo -n "$module "
+	    let cnt++
+	fi
+    done
+    [ $cnt -eq 0 ] && echo -n "none found"
+    modules+=cnt
+    echo
+    echo
+
+    echo -ne "Connection management modules:\n\t"
+    cnt=0
+    for module in $UNLOAD_CORE_CM_MODULES; do
+	if is_module $module; then
+	    echo -n "$module "
+	    let cnt++
+	fi
+    done
+    [ $cnt -eq 0 ] && echo -n "none found"
+    modules+=cnt
+    echo
+    echo
+
+    for module in $UNLOAD_CORE_MODULES; do
+	if is_module $module; then
+	    let modules++
+	fi
+    done
+
+    if is_module ib_ipoib; then
+	echo -n "Configured IPoIB interfaces: "
+	configs=$(get_configs_by_type "InfiniBand")
+	[ -n "$configs" ] && echo $configs || echo -n "none"
+	echo
+	echo -n "Currently active IPoIB interfaces: "
+	cnt=0
+	for i in $interfaces
+	do
+	    ip link show $i | grep -w UP > /dev/null 2>&1
+	    [ $? -eq 0 ] && echo -n "$i " && let cnt++
+	done
+	[ $cnt -eq 0 ] && echo -n "none"
+	echo
+    fi
+    
+    if [ $modules -eq 0 ]; then
+	if [ -f /var/lock/subsys/rdma ]; then
+	    return 2
+	else
+	    return 3
+	fi
+    else
+	return 0
+    fi
+}
+
+restart ()
+{
+    stop
+    start
+}
+
+condrestart ()
+{
+    [ -e /var/lock/subsys/rdma ] && restart || return 0
+}
+
+usage ()
+{
+    echo
+    echo "Usage: `basename $0` {start|stop|restart|condrestart|try-restart|force-reload|status}"
+    echo
+    return 2
+}
+
+case $1 in
+    start|stop|restart|condrestart|try-restart|force-reload)
+	[ `id -u` != "0" ] && exit 4 ;;
+esac
+
+case $1 in
+    start) start; RC=$? ;;
+    stop) stop; RC=$? ;;
+    restart) restart; RC=$? ;;
+    reload) RC=3 ;;
+    condrestart) condrestart; RC=$? ;;
+    try-restart) condrestart; RC=$? ;;
+    force-reload) condrestart; RC=$? ;;
+    status) status; RC=$? ;;
+    *) usage; RC=$? ;;
+esac
+
+exit $RC

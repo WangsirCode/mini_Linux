@@ -1,0 +1,112 @@
+#!/bin/sh
+#
+# spice-vdagentd Agent daemon for Spice guests
+#
+# chkconfig:   345 70 30
+# description: Together with a per X-session agent process the spice agent \
+#              daemon enhances the spice guest user experience with client \
+#              mouse mode, guest <-> client copy and paste support and more.
+
+### BEGIN INIT INFO
+# Provides: spice-vdagentd
+# Required-Start: $local_fs messagebus
+# Required-Stop: $local_fs messagebus
+# Should-Start: $local_fs messagebus
+# Should-Stop: $local_fs messagebus
+# Default-Start: 5
+# Default-Stop: 0 1 2 3 4 6
+# Short-Description: Agent daemon for Spice guests
+# Description: Together with a per X-session agent process the spice agent
+#	daemon enhances the spice guest user experience with client
+#	mouse mode, guest <-> client copy and paste support and more.
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+exec="/usr/sbin/spice-vdagentd"
+prog="spice-vdagentd"
+port="/dev/virtio-ports/com.redhat.spice.0"
+pid="/var/run/spice-vdagentd/spice-vdagentd.pid"
+
+[ -e /etc/sysconfig/$prog ] && . /etc/sysconfig/$prog
+
+lockfile=/var/lock/subsys/$prog
+
+start() {
+    [ -x $exec ] || exit 5
+    [ -c $port ] || exit 0
+    modprobe uinput > /dev/null 2>&1
+    # In case the previous running vdagentd crashed
+    rm -f /var/run/spice-vdagentd/spice-vdagent-sock
+    echo -n $"Starting $prog: "
+    daemon --pidfile $pid $exec $SPICE_VDAGENTD_EXTRA_ARGS
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && touch $lockfile
+    return $retval
+}
+
+stop() {
+    echo -n $"Stopping $prog: "
+    killproc -p $pid $prog
+    retval=$?
+    echo
+    [ $retval -eq 0 ] && rm -f $lockfile
+    return $retval
+}
+
+restart() {
+    stop
+    start
+}
+
+reload() {
+    restart
+}
+
+force_reload() {
+    restart
+}
+
+rh_status() {
+    # run checks to determine if the service is running or use generic status
+    status -p $pid $prog
+}
+
+rh_status_q() {
+    rh_status >/dev/null 2>&1
+}
+
+
+case "$1" in
+    start)
+        rh_status_q && exit 0
+        $1
+        ;;
+    stop)
+        rh_status_q || exit 0
+        $1
+        ;;
+    restart)
+        $1
+        ;;
+    reload)
+        rh_status_q || exit 7
+        $1
+        ;;
+    force-reload)
+        force_reload
+        ;;
+    status)
+        rh_status
+        ;;
+    condrestart|try-restart)
+        rh_status_q || exit 0
+        restart
+        ;;
+    *)
+        echo $"Usage: $0 {start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+        exit 2
+esac
+exit $?

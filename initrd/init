@@ -1,0 +1,12 @@
+#!/bin/bash
+#mount proc and sysfs
+#mount -t proc proc /proc
+#mount -t sysfs sysfs /sys
+#mount -t devpts -o gid=5,mode=620 devpts /dev/pts
+#mount -t tmpfs tmpfs /dev/shm
+#start udevd
+#/sbin/udevd --daemon --resolve-names=never
+#/sbin/udevadm trigger --action=add $udevtriggeropts
+#/bin/bash
+exec /sbin/init
+#/bin/bash

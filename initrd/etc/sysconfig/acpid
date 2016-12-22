@@ -1,0 +1,5 @@
+# Additional environment file for acpid
+
+# To pass additional options (for instance, -l to log events) to the
+# acpid binary at startup, set OPTIONS here.
+OPTIONS=

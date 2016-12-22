@@ -1,0 +1,4 @@
+# Arguments to pass to quota_nld daemon.
+# -D, --no-dbus     Do not forward messages to D-Bus
+# -C, --no-console  Do not print messages on last user's terminal
+QUOTA_NLD_OPTS=""

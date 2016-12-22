@@ -1,0 +1,7 @@
+# Runs CRDA for kernel wireless regulatory events.
+# For more information see:
+# http://wireless.kernel.org/en/developers/Regulatory/CRDA
+
+SUBSYSTEM=="ieee80211", ACTION=="add", RUN+="/usr/sbin/setregdomain"
+
+KERNEL=="regulatory*", ACTION=="change", SUBSYSTEM=="platform", RUN+="/usr/sbin/crda"
