@@ -1,0 +1,2 @@
+KERNEL=="cpu0", ACTION=="add", RUN+="/sbin/modprobe microcode"
+KERNEL=="microcode", ACTION=="add", RUN+="/sbin/microcode_ctl -Qu"

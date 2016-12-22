@@ -1,0 +1,29 @@
+##############################################################################################################
+# Battery recall notices: Toshiba
+#
+# These are properties defining the behavior:
+#  DKP_RECALL_NOTICE
+#  DKP_RECALL_VENDOR
+#  DKP_RECALL_URL
+#
+
+# only match power_supply devices
+SUBSYSTEM!="power_supply", GOTO="dkp_battery_recall_toshiba_end"
+
+# only match batteries
+ATTR{type}!="Battery", GOTO="dkp_battery_recall_toshiba_end"
+
+# only match correct manufacturer
+ATTR{manufacturer}!="TOSHIBA", GOTO="dkp_battery_recall_toshiba_end"
+
+ATTR{model_name}=="PA3465U", ENV{DKP_RECALL_NOTICE}="1"
+ATTR{model_name}=="PA3399U", ENV{DKP_RECALL_NOTICE}="1"
+ATTR{model_name}=="PA3400U", ENV{DKP_RECALL_NOTICE}="1"
+ATTR{model_name}=="PA3465U", ENV{DKP_RECALL_NOTICE}="1"
+ATTR{model_name}=="PA3399U", ENV{DKP_RECALL_NOTICE}="1"
+ATTR{model_name}=="PA3400U", ENV{DKP_RECALL_NOTICE}="1"
+
+ENV{DKP_RECALL_NOTICE}=="1", ENV{DKP_RECALL_VENDOR}="Toshiba", ENV{DKP_RECALL_URL}="http://bxinfo.toshiba.com/"
+
+LABEL="dkp_battery_recall_toshiba_end"
+

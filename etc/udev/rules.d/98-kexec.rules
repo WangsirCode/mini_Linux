@@ -1,0 +1,4 @@
+SUBSYSTEM=="cpu", ACTION=="add", PROGRAM="/etc/init.d/kdump condrestart"
+SUBSYSTEM=="cpu", ACTION=="remove", PROGRAM="/etc/init.d/kdump condrestart"
+SUBSYSTEM=="memory", ACTION=="add", PROGRAM="/etc/init.d/kdump condrestart"
+SUBSYSTEM=="memory", ACTION=="remove", PROGRAM="/etc/init.d/kdump condrestart"

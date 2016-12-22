@@ -1,0 +1,36 @@
+#!/bin/bash
+target=/home/boot
+clearCmd()
+{
+	if which $cmd &>/dev/null;then
+	cmdPath=`which $cmd`
+	echo $cmdPath
+	else
+	echo 'No such command'
+	return 5
+	fi
+}
+cmdCopy()
+{
+	cmdDir=`dirname $1`
+	[ -d ${target}${cmdDir} ] || mkdir -p ${target}${cmdDir}
+	[ -f ${target}${1} ] || cp $1 ${target}${cmdDir}
+}
+libCopy()
+{
+	for lib in `ldd $1 |grep -o "/[^[:space:]]\{1,\}"`;do
+	libDir=`dirname $lib`
+	[ -d ${target}${libDir} ] || mkdir -p ${target}${libDir}
+	[ -f ${target}${lib} ] || cp $lib ${target}${libDir}
+	done
+}
+while true;do
+read -p "enter a command:" cmd
+if [ "$cmd" == 'quit' ];then
+echo 'quit'
+exit 0
+fi
+clearCmd $cmd
+cmdCopy $cmdPath
+libCopy $cmdPath
+done

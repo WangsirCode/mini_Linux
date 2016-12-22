@@ -1,0 +1,3 @@
+SUBSYSTEM=="block", IMPORT{cmdline}="udev.log.block"
+SUBSYSTEM=="block", ENV{udev.log.block}=="info", OPTIONS+="log_priority=info"
+SUBSYSTEM=="block", ENV{udev.log.block}=="err", OPTIONS+="log_priority=err"

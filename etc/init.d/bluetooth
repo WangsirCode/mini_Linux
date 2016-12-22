@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# chkconfig: 345 50 83
+# description: Turn HID adapters into Bluetooth ones
+#
+### BEGIN INIT INFO
+# Short-Description: Trigger bluetoothd start-up
+# Description: Trigger bluetoothd start-up
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+[ -e /etc/sysconfig/bluetooth ] && . /etc/sysconfig/bluetooth
+
+start()
+{
+	echo -n $"Enabling Bluetooth devices:"
+	udevadm trigger --subsystem-match=bluetooth
+	echo ""
+	return 0
+}
+
+stop()
+{
+	# FIXME If somebody figures out how to disable the K* script
+	echo -n "Stopping Bluetooth services:"
+	echo ""
+	return 0
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  *)
+	echo $"Usage: $0 {start|stop}"
+	exit 3
+	;;
+esac
+
+exit $RETVAL

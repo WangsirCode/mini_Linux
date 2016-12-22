@@ -1,0 +1,14 @@
+# SAS by-path
+
+DEVPATH!="*/end_device-*", GOTO="sas_storage_end"
+ACTION=="remove", GOTO="sas_storage_end"
+
+SUBSYSTEMS!="scsi", GOTO="sas_storage_end"
+DEVPATH=="*/virtual/*", GOTO="sas_storage_end"
+
+ENV{DEVTYPE}=="disk", IMPORT{program}="sas_path_id $devnode $env{ID_PATH}"
+
+ENV{DEVTYPE}=="disk", ENV{ID_SAS_PATH}=="?*", SYMLINK+="disk/by-path/$env{ID_SAS_PATH}"
+ENV{DEVTYPE}=="partition", ENV{ID_SAS_PATH}=="?*", SYMLINK+="disk/by-path/$env{ID_SAS_PATH}-part%n"
+
+LABEL="sas_storage_end"

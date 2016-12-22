@@ -1,0 +1,225 @@
+#!/bin/sh
+#
+# Copyright(c) 2010-2011 Intel Corporation. All rights reserved.
+#
+# This program is free software; you can redistribute it and/or modify it
+# under the terms and conditions of the GNU General Public License,
+# version 2, as published by the Free Software Foundation.
+#
+# This program is distributed in the hope it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+# more details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+#
+# chkconfig: 2345 21 80
+#
+# Maintained at www.Open-FCoE.org
+
+### BEGIN INIT INFO
+# Provides: fcoe
+# Required-Start: network
+# Required-Stop:
+# Default-Start: 2 3 4 5
+# Default-Stop:
+# Short-Description: Open-FCoE Initiator
+# Description: Open-FCoE Initiator
+### END INIT INFO
+
+CONFIG_DIR=/etc/fcoe
+LOG_FILE="/var/log/fcoemon.log"
+LOCKFILE="/var/lock/subsys/fcoe"
+FCOEMON=/usr/sbin/fcoemon
+FCOEADM=/usr/sbin/fcoeadm
+FCOEMON_OPTS=
+
+. /etc/init.d/functions
+. $CONFIG_DIR/config
+
+if [ "$USE_SYSLOG" = "yes" ] || [ "$USE_SYSLOG" = "YES" ]; then
+    FCOEMON_OPTS+=" --syslog"
+fi
+
+if [ "$DEBUG" = "yes" ] || [ "$DEBUG" = "YES" ]; then
+    FCOEMON_OPTS+=" --debug"
+fi
+
+test -x $FCOEADM || {
+	echo "$FCOEADM not installed";
+	if [ "$1" = "stop" ]; then exit 0;
+	else
+	    failure
+	fi
+}
+
+test -x $FCOEMON || {
+	echo "$FCOEMON not installed";
+	if [ "$1" = "stop" ]; then exit 0;
+	else
+	    failure
+	fi
+}
+
+have_fcoe_root() {
+	# This simply checks if root is on a net device
+	local rootopts=$(awk '{ if ($1 !~ /^[ \t]*#/ && $2 == "/") { print $4; }}' /etc/mtab)
+	if [[ "$rootopts" =~ "_netdev" ]]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+start()
+{
+	echo -n $"Starting FCoE initiator service: "
+
+	pid=$($FCOEADM -p 2> /dev/null)
+	if [ -z "$pid" ]; then
+		modprobe -q libfc
+		modprobe -q sg
+		modprobe -q -a $SUPPORTED_DRIVERS
+
+		daemon ${FCOEMON} ${FCOEMON_OPTS}
+		echo
+		touch ${LOCKFILE}
+		# Wait for the _netdev devices
+		if [ "$WAIT_TIMEOUT" = "" ]; then
+			WAIT_TIMEOUT=65
+		fi
+		local donewait=1
+		local devs=($(egrep 'by-path\/fc-.*_netdev' /etc/fstab | cut -d ' ' -f1))
+		if [ "$devs" != "" ]; then
+			echo -n "Waiting for FCoE devices . "
+			while [ $WAIT_TIMEOUT -gt 0 ]; do
+				for disk in ${devs[*]}; do
+					if ! test -b $disk; then
+						donewait=0
+						break
+					fi
+				done
+				test $donewait -eq 1 && break;
+				sleep 1
+				echo -n ". "
+				donewait=1
+				WAIT_TIMEOUT=$(($WAIT_TIMEOUT-1))
+			done
+			if [ "$WAIT_TIMEOUT" -eq 0 ]; then
+				echo "timed out!"
+			else
+				echo "done!"
+			fi
+		fi
+		if [ "$MINIMUM_WAIT" = "" ]; then
+			MINIMUM_WAIT=0
+		fi
+		if [ $MINIMUM_WAIT -ne 0 ]; then
+			sleep $MINIMUM_WAIT
+		fi
+		echo
+	else
+		echo "(already running)"
+	fi
+}
+
+stop()
+{
+	if have_fcoe_root; then
+		echo $"Possible FCoE root detected, not stopping FCoE."
+		exit 1
+	else
+		local force=$1
+
+		pid=$($FCOEADM -p 2> /dev/null)
+		if [ "$force" == "force" ]
+		then
+			action "Destroying any active fcoe interface/s"
+			[ "$pid" ] && kill -HUP $pid
+			sleep 3
+			# Destroy vports first (rhbz#903099)
+			for vport in $(ls /sys/class/fc_vports); do
+				echo 1 > /sys/class/fc_vports/${vport}/vport_delete
+			done
+			for iface in $($FCOEADM -i | grep -F 'Symbolic Name:' | \
+				sed 's/^.*over \([^\s]*\)$/\1/'); do
+					echo $iface >/sys/module/libfcoe/parameters/destroy
+				done
+			sleep 3
+			modprobe -r $SUPPORTED_DRIVERS libfc
+		else
+			[ "$pid" ] && kill -TERM $pid
+		fi
+
+		action $"Stopping FCoE initiator service: "
+
+		rm -f ${LOCKFILE}
+	fi
+}
+
+status()
+{
+	[ -f ${LOCKFILE} ] || { echo "$FCOEMON is stopped" ; return 3; }
+
+	status=0
+	pidof $FCOEMON >/dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		pid=$($FCOEADM -p 2> /dev/null)
+		echo "$FCOEMON -- RUNNING, pid=${pid}"
+	else
+		echo "$FCOEMON -- UNUSED"
+		status=3
+	fi
+
+	interfaces=`$FCOEADM -i 2>&1 | \
+		    awk '/Symbolic Name:/{print $6}' | \
+		    sort | awk '{printf("%s ", $1)}'`
+
+	if [ -z "$interfaces" ]; then
+		echo "No interfaces created."
+	else
+		echo "Created interfaces: $interfaces"
+		status=0
+	fi
+	if [ -f $LOCKFILE -a $status -eq 3 ]; then
+		status=2
+	fi
+
+	return $status
+}
+
+case "$1" in
+	start)
+		start
+		;;
+
+	stop)
+		stop $2
+		;;
+
+	restart)
+		stop $2
+		start
+		;;
+
+	force-reload)
+		stop force
+		start
+		;;
+
+	status)
+		status
+		exit $?
+		;;
+	condrestart|try-restart)
+		status || exit 0
+		$0 restart
+		;;
+	*)
+		echo -n "Usage: $0 {start|stop [force]|status|restart [force]|"
+		echo "force-reload|condrestart|try-restart}"
+		exit 1
+		;;
+esac

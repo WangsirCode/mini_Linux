@@ -1,0 +1,20 @@
+# enable readahead at system startup
+READAHEAD="no"
+
+# enable (at least monthly) readahead list collection
+READAHEAD_COLLECT="no"
+
+# collect x seconds more after prefdm started
+READAHEAD_EXTRA_COLLECT="10"
+
+# collect on rpm database change
+READAHEAD_COLLECT_ON_RPM="yes"
+
+# Delay these services for the readahead-collector.
+# At least "auditd" has to be delayed, for the collector
+# to run, if it is enabled on the system.
+READAHEAD_DELAY_SERVICES="auditd"
+
+# Minimum memory the machine has to have (kB)
+# to run readahead.
+READAHEAD_MIN_MEM=393216

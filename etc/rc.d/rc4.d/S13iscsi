@@ -1,0 +1,178 @@
+#!/bin/sh
+#
+# iscsi: log into iSCSI targets
+#
+# chkconfig: 345 13 89
+# description: Logs into iSCSI targets needed at system startup
+
+# Note we should have $network in Required-Start/Stop but we don't because if
+# we would require network chkconfig will put us directly after NetworkManager
+# when using NM, which will make our see if the network is up test succeed
+# while NM is actually still configuring the network. By not requiring network
+# chkconfig will use the chkconfig header to determine our start prio, starting
+# us after the old network service, but before NM (netfs does this the same).
+
+### BEGIN INIT INFO
+# Provides:          iscsi
+# Required-Start:    iscsid
+# Required-Stop:     iscsid
+# Default-Start: 3 4 5
+# Default-Stop: 0 1 2 6
+# Short-Description: Starts and stops login and scanning of iSCSI devices.
+# Description: iscsi provides the iSCSI state machine for software iscsi/iser
+#              and partial offloaded hardware. iscsi logs into and scans
+#              for iSCSI devices, and shuts them down when stopped.
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+exec="/sbin/iscsiadm"
+prog="iscsi"
+config="/etc/iscsi/initiatorname.iscsi"
+lockfile=/var/lock/subsys/$prog
+iscsid_lockfile=/var/lock/subsys/${prog}_iscsid
+
+start() {
+    [ -x $exec ] || exit 5
+    [ -f $config ] || exit 6
+
+    # if the network isn't up yet exit cleanly, NetworkManager will call us
+    # again when the network is up
+    [ ! -f /var/lock/subsys/network -a ! -f /var/lock/subsys/NetworkManager ] && exit 0
+
+    # if no nodes are setup to startup automatically exit cleanly
+    grep -qrs "node.startup = automatic" /var/lib/iscsi/nodes
+    [ $? -eq 0 ] || exit 0
+
+    # this script is normally called from startup so log into
+    # nodes marked node.startup=automatic
+    echo -n $"Starting $prog: "
+    $exec -m node --loginall=automatic 2>&1 > /dev/null | grep iscsiadm
+    # Ignore return code, because this command attempts to log into
+    # multiple sessions and some sessions could get logged into and
+    # some could be down temporarily.
+    success $"Starting $prog"
+    touch $lockfile
+    echo
+    return 0
+}
+
+iscsi_sessions_running() {
+    declare -a iparams=( $(iscsiadm -m session 2>/dev/null | egrep "tcp|iser|bnx2i|be2iscsi|cxgb3i|cxgb4i") )
+    if [[ -z "${iparams[*]}" ]]; then
+        # no sessions
+        return 2
+    fi
+
+    return 0
+}
+
+cleanup_successful_stop() {
+    success $"Stopping $prog"
+    rm -f $lockfile
+    echo
+}
+
+stop() {
+    # Don't turn off iscsi if root is possibly on a iscsi disk.
+    rootopts=$(awk '{ if ($1 !~ /^[ \t]*#/ && $2 == "/") { print $4; }}' /etc/mtab)
+    if [[ "$rootopts" =~ "_netdev" ]] ; then
+        echo $"Can not shutdown iSCSI. Root is on a iSCSI disk."
+
+        # Just clean up lock file if this is a system shutdown/reboot.
+        if [ "$RUNLEVEL" = "6" -o "$RUNLEVEL" = "0" -o "$RUNLEVEL" = "1" ]; then
+            rm -f $lockfile
+        fi
+
+        exit 1
+    fi
+
+    echo -n $"Stopping $prog: "
+
+    if ! iscsi_sessions_running ; then
+        cleanup_successful_stop
+        return 0
+    fi
+
+    if [ "$RUNLEVEL" = "6" -o "$RUNLEVEL" = "0" -o "$RUNLEVEL" = "1" ]; then
+        $exec -m node --logoutall=all 2>&1 > /dev/null
+    else
+        $exec -m node --logoutall=automatic 2>&1 > /dev/null
+    fi
+
+    ret=$?
+    # ignore ISCSI_ERR_NO_OBJS_FOUND/21
+    if [[ "$ret" -ne 0 && "$ret" -ne 21 ]]; then
+        failure $"Stopping $prog"
+        echo
+        return 1
+    fi
+
+    cleanup_successful_stop
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+reload() {
+    return 3
+}
+
+force_reload() {
+    restart
+}
+
+rh_status() {
+    [ -f $lockfile ] || { echo $"$prog is stopped" ; return 3 ; }
+
+    declare -a iparams=( $(iscsiadm -m session 2>/dev/null | egrep "tcp|iser|bnx2i|be2iscsi|cxgb3i|cxgb4i") )
+    if [[ -z "${iparams[*]}" ]]; then
+        # no sessions
+	echo $"No active sessions"
+        return 2
+    fi
+
+    iscsiadm -m session -P 3
+    return 0
+}
+
+rh_status_q() {
+    rh_status >/dev/null 2>&1
+}
+
+
+case "$1" in
+    start)
+        rh_status_q && exit 0
+        $1
+        ;;
+    stop)
+        $1
+        ;;
+    restart)
+        $1
+        ;;
+    reload)
+        rh_status_q || exit 7
+        $1
+        ;;
+    force-reload)
+        force_reload
+        ;;
+    status)
+        rh_status
+        ;;
+    condrestart|try-restart)
+        rh_status_q || exit 0
+        restart
+        ;;
+    *)
+        echo $"Usage: $0
+{start|stop|status|restart|condrestart|try-restart|reload|force-reload}"
+        exit 2
+esac
+exit $?
