@@ -1,8 +1,0 @@
-kernel/kernel/configs.ko
-kernel/fs/ntfs/ntfs.ko
-kernel/fs/efivarfs/efivarfs.ko
-kernel/crypto/echainiv.ko
-kernel/crypto/drbg.ko
-kernel/crypto/jitterentropy_rng.ko
-kernel/drivers/usb/storage/usb-storage.ko
-kernel/drivers/thermal/x86_pkg_temp_thermal.ko
