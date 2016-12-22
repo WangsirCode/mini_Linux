@@ -10,9 +10,9 @@ export PS1="[\u@\h \W] \$ "
 if [ -f /etc/bashrc ]; then
 	. /etc/bashrc
 fi
-ifconfig eth1 192.168.30.133
-route add default gw 192.168.30.2
+ifconfig eth1 192.168.14.14
 ip=115.159.212.140
 export ip
 alias mountsda='mount -t auto /dev/sda1 /mnt'
+alias mountsdb='mount -t auto /dev/sda4 /mnt/usb'
 service sshd start
