@@ -9,3 +9,5 @@ exit
 service sshd start
 service sshd status
 exit
+passwd root
+exit
